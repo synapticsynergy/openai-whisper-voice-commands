@@ -6,3 +6,4 @@ nest_asyncio
 pandas
 scipy
 openai
+PyAudio==0.2.13
