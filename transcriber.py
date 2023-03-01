@@ -77,17 +77,12 @@ def start_audio_stream():
     # Create a bytes buffer to hold the audio data
     audio_buffer = io.BytesIO()
 
-    # Capture audio data from the microphone and write it to the buffer
-    capture_start_time = time.monotonic()
-    # speaking = False
     silence_start_time = None
-    # while time.monotonic() - capture_start_time < CAPTURE_DURATION:
     while True:
         data = stream.read(CHUNK_SIZE)
         # Check if there is speech activity in the current chunk
         is_speech = vad.is_speech(data, SAMPLE_RATE)
         if is_speech:
-            # speaking = True
             silence_start_time = None
             # Write the audio data to the current audio buffer
             audio_buffer.write(data)
@@ -119,7 +114,6 @@ def main():
         options = whisper.DecodingOptions(language= 'en', fp16=False)
 
         result = whisper.decode(model, mel, options)
-        print(result.text)
 
         if result.no_speech_prob < 0.5:
             print(result.text)
