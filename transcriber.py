@@ -5,6 +5,7 @@ import ffmpeg
 import io
 import pyaudio
 import time
+import webrtcvad
 
 model = whisper.load_model("base")
 
@@ -20,10 +21,18 @@ HOP_LENGTH = 160
 CHUNK_LENGTH = 30
 N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE  # 480000: number of samples in a chunk
 N_FRAMES = exact_div(N_SAMPLES, HOP_LENGTH)  # 3000: number of frames in a mel spectrogram input
-CHUNK_SIZE = 1024
+CHUNK_SIZE = 480
+# CHUNK_SIZE = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 CAPTURE_DURATION = 5  # seconds
+# VAD_THRESHOLD = 0.01
+VAD_THRESHOLD = 200
+VAD_MODE = 3
+VAD_SILENCE_LENGTH = 1000  # milliseconds
+
+# Create a VAD object with the desired mode
+vad = webrtcvad.Vad(VAD_MODE)
 
 
 def load_audio_stream(stream, sr: int = SAMPLE_RATE):
@@ -53,8 +62,7 @@ def load_audio_stream(stream, sr: int = SAMPLE_RATE):
     return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
-def get_audio_stream():
-
+def start_audio_stream():
     # Create an instance of PyAudio
     pa = pyaudio.PyAudio()
 
@@ -66,21 +74,37 @@ def get_audio_stream():
         input=True,
         frames_per_buffer=CHUNK_SIZE
     )
-
     # Create a bytes buffer to hold the audio data
     audio_buffer = io.BytesIO()
 
     # Capture audio data from the microphone and write it to the buffer
     capture_start_time = time.monotonic()
-    while time.monotonic() - capture_start_time < CAPTURE_DURATION:
+    # speaking = False
+    silence_start_time = None
+    # while time.monotonic() - capture_start_time < CAPTURE_DURATION:
+    while True:
         data = stream.read(CHUNK_SIZE)
-        audio_buffer.write(data)
+        # Check if there is speech activity in the current chunk
+        is_speech = vad.is_speech(data, SAMPLE_RATE)
+        if is_speech:
+            # speaking = True
+            silence_start_time = None
+            # Write the audio data to the current audio buffer
+            audio_buffer.write(data)
+        # If there is no speech activity and we are not already in a silence period, start a new one
+        elif silence_start_time is None:
+            silence_start_time = time.monotonic()
+        # If there is no speech activity and we are in a silence period, check if the period is long enough
+        elif time.monotonic() - silence_start_time > VAD_SILENCE_LENGTH / 1000:
+            # If the silence period is long enough, assume the current audio buffer is complete
+            if audio_buffer.tell() > 0:
+                print("End of speech detected")
+                # Stop capturing and clean up
+                break
 
-    # Stop capturing and clean up
     stream.stop_stream()
     stream.close()
     pa.terminate()
-
     # Reset the buffer position to the beginning
     audio_buffer.seek(0)
     return audio_buffer
@@ -88,11 +112,8 @@ def get_audio_stream():
 
 def main():
     while True:
-        stream = get_audio_stream()
-        audio = load_audio_stream(stream)
-        print(audio)
-        print(audio.shape)
-        print(type(audio))
+        new_stream = start_audio_stream()
+        audio = load_audio_stream(new_stream)
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio).to(model.device)
         options = whisper.DecodingOptions(language= 'en', fp16=False)
